@@ -83,7 +83,8 @@ class TMDBService:
                     'all_cast_saved': False
                 })
 
-            movies.sort(key=lambda x: x.get('release_date', ''), reverse=True)
+            movies = sorted(movies, key=lambda x: x.get('release_date', ''), reverse=True)[:150]
+            print('MOVIES TMDB:', len(movies))
             return movies
         except Exception as e:
             return {'error': str(e)}, 500
@@ -103,12 +104,7 @@ class TMDBService:
                 data = response.json()
 
             cast = []
-            index = 0
-            max_cast = 90  # Limitar a los primeros 90 actores
             for person in data.get('cast', []):
-                index += 1
-                if index > max_cast:
-                    break
                 # if person
                 profile_path = person.get('profile_path')
                 if profile_path:
@@ -117,10 +113,12 @@ class TMDBService:
                     'id': person.get('id'),
                     'name': person.get('name'),
                     'profile_path': profile_path,
-                    'character': person.get('character')
+                    'character': person.get('character'),
+                    'order': person.get('order')
                 })
 
-            print( f"Cast N = {len(cast)}")
+            cast = sorted(cast, key=lambda x: x.get('order', ''))[:80]
+            print("CAST TMDB:", len(cast))
             return cast
         except Exception as e:
             return {'error': str(e)}, 500

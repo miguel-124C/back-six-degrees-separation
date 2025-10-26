@@ -59,32 +59,105 @@ class GameService:
         """
         Agrega películas y su elenco a la base de datos.
         """
-        movies: List[MovieInterface] = []
-        movies = self.__get_list_movies_by_actor__(actor_id)
+         # 1. Obtener todas las películas del actor de una vez
+        movies = self.tmdb_service.get_list_movies_by_actor(actor_id)
 
+        # 2. Obtener todos los IDs de películas existentes en un solo query
+        existing_movie_ids = set(
+            self.movie_service.get_movies_by_ids([m['id'] for m in movies])
+        )
+
+        # 3. Preparar lotes para inserción
+        movies_to_create = []
         for movie in movies:
-            exists_movie = self.__add_movie_if_not_exists__(movie['id'], movie['title'], movie['release_date'])
-            self.actor_movie_service.add_actor_to_movie(id_actor=actor_id, id_movie=movie['id'], character=movie['character'])
-            """ Validacion para que solo se agregue el cast si la pelicula no existia """
-            if not exists_movie and not movie['all_cast_saved']:
-                self.__add_cast__(movie['id'])
-                self.movie_service.check_cast_saved(movie['id'], True)
+            if movie['id'] not in existing_movie_ids:
+                movies_to_create.append({
+                    'id': movie['id'],
+                    'title': movie['title'],
+                    'release_date': movie['release_date']
+                })
+        
+        # 4. Crear películas en lote
+        if movies_to_create:
+            self.movie_service.create_movies_bulk(movies_to_create)
 
+        # 5. Preparar todas las relaciones actor-película
+        actor_movie_relations = [
+            {'id_actor': actor_id, 'id_movie': movie['id'], 'character': movie['character']}
+            for movie in movies
+        ]
+        
+        # 6. Insertar relaciones en lote (ignorando duplicados)
+        self.actor_movie_service.add_actor_to_movies_bulk(actor_movie_relations)
+
+        # 7. Procesar el cast de películas nuevas en lote
+        movies_needing_cast = [
+            m for m in movies 
+            if m['id'] not in existing_movie_ids and not m['all_cast_saved']
+        ]
+        
+        if movies_needing_cast:
+            self.__add_cast_bulk__([m['id'] for m in movies_needing_cast])
+            self.movie_service.check_cast_saved_bulk([m['id'] for m in movies_needing_cast], True)
+
+        # 8. Actualizar estado del actor
         self.actor_service.check_movies_saved(actor_id, True)
 
-    def __add_cast__(self, movie_id):
-        casts = []
-        casts = self.__get_casts_by_movie_id__(movie_id)
+    def __add_cast_bulk__(self, movie_ids: List[int]):
+        """
+        Versión optimizada para agregar el cast de múltiples películas
+        """
+        # 1. Obtener el cast de todas las películas (mapeado por movie_id)
+        all_casts_by_movie = {}
+        index = 0
+        for movie_id in movie_ids:
+            index += 1
+            print(index)
+            casts = self.tmdb_service.get_movie_credits(movie_id)
+            all_casts_by_movie[movie_id] = casts
 
-        # if not casts:
-        #     casts = self.actor_movie_service.get_all_actors_by_movie(movie_id)
-        # TODO: Optimizar para que no haga consultas innecesarias
-        for cast in casts:
-            actor = self.actor_service.get_actor_by_id(cast['id'])
+        # 2. Extraer IDs únicos de actores
+        unique_actor_ids = {cast['id'] for casts in all_casts_by_movie.values() for cast in casts}
 
-            if not actor:
-                self.actor_service.create_actor(id_person=cast['id'], name=cast['name'], profile_path=cast['profile_path'])
-            self.actor_movie_service.add_actor_to_movie(id_actor=cast['id'], id_movie=movie_id, character=cast['character'])
+        # 3. Obtener actores existentes en un solo query
+        existing_actor_ids = set(self.actor_service.get_actors_by_ids(list(unique_actor_ids)))
+
+        # 4. Preparar actores nuevos para inserción en lote (una sola entrada por actor)
+        actors_map = {}
+        for casts in all_casts_by_movie.values():
+            for cast in casts:
+                # guardar la primera aparición del actor
+                if cast['id'] not in actors_map:
+                    actors_map[cast['id']] = cast
+
+        actors_to_create = [
+            {
+                'id': aid,
+                'name': actors_map[aid]['name'],
+                'profile_path': actors_map[aid].get('profile_path')
+            }
+            for aid in actors_map.keys()
+            if aid not in existing_actor_ids
+        ]
+        print(f"Creating {len(actors_to_create)} new actors")
+
+        # 5. Crear actores en lote (lista ya deduplicada por id)
+        if actors_to_create:
+            self.actor_service.create_actors_bulk(actors_to_create)
+
+        # 6. Preparar todas las relaciones actor-película (solo las reales por película)
+        relations = []
+        for movie_id, casts in all_casts_by_movie.items():
+            for cast in casts:
+                relations.append({
+                    'id_actor': cast['id'],
+                    'id_movie': movie_id,
+                    'character': cast.get('character')
+                })
+
+        # 7. Insertar relaciones en lote
+        if relations:
+            self.actor_movie_service.add_actor_to_movies_bulk(relations)
 
     def __add_movie_if_not_exists__(self, movie_id: int, title: str, release_date: str) -> bool:
         """
@@ -96,18 +169,4 @@ class GameService:
             self.movie_service.create_movie(id=movie_id, title=title, release_date=release_date)
             return False
         return True
-
-    def __get_list_movies_by_actor__(self, actor_id: int) -> List[MovieInterface]:
-        """
-        Obtiene la lista de películas asociadas a un actor dado su ID. TMDB
-        """
-        movies = self.tmdb_service.get_list_movies_by_actor(actor_id)
-        return movies
-
-    def __get_casts_by_movie_id__(self, movie_id: int) -> List[ActorInteface]:
-        """
-        Obtiene el cast de una película desde TMDB.
-        """
-        casts = self.tmdb_service.get_movie_credits(movie_id)
-        return casts
         

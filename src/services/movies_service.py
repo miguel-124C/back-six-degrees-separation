@@ -40,3 +40,24 @@ class MovieService:
         self.db_session.commit()
 
         return movie_obj      
+
+    def get_movies_by_ids(self, movie_ids: List[int]) -> List[int]:
+        """Retorna los IDs de las películas que existen"""
+        return [
+            movie.id for movie in 
+            self.db_session.query(Movie.id)
+            .filter(Movie.id.in_(movie_ids))
+            .all()
+        ]
+    
+    def create_movies_bulk(self, movies: List[dict]):
+        """Crea múltiples películas en una sola transacción"""
+        self.db_session.bulk_insert_mappings(Movie, movies)
+        self.db_session.commit()
+
+    def check_cast_saved_bulk(self, movie_ids: List[int], saved: bool):
+        """Actualiza el estado de cast_saved para múltiples películas"""
+        self.db_session.query(Movie)\
+            .filter(Movie.id.in_(movie_ids))\
+            .update({Movie.all_cast_saved: saved}, synchronize_session=False)
+        self.db_session.commit()

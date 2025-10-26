@@ -1,6 +1,6 @@
 from src.models.database import ActorMovie, Movie, Actor
 from src.interfaces.models_interface import MovieInterface, ActorInteface
-from sqlalchemy import and_
+from sqlalchemy import and_, tuple_
 from typing import List
 
 class ActorMovieService:
@@ -72,3 +72,26 @@ class ActorMovieService:
         self.db_session.add(nueva_relacion)
         self.db_session.commit()
         return nueva_relacion
+    
+    def add_actor_to_movies_bulk(self, relations: List[dict]):
+        """Agrega múltiples relaciones actor-película en una sola transacción"""
+        existing = set(
+            (r.id_actor, r.id_movie)
+            for r in self.db_session.query(ActorMovie.id_actor, ActorMovie.id_movie)
+            .filter(
+                tuple_(ActorMovie.id_actor, ActorMovie.id_movie).in_(
+                    [(r['id_actor'], r['id_movie']) for r in relations]
+                )
+            )
+            .all()
+        )
+        
+        # Filtrar solo las relaciones que no existen
+        new_relations = [
+            r for r in relations
+            if (r['id_actor'], r['id_movie']) not in existing
+        ]
+        
+        if new_relations:
+            self.db_session.bulk_insert_mappings(ActorMovie, new_relations)
+            self.db_session.commit()

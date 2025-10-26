@@ -1,4 +1,6 @@
 from src.models.database import Actor
+from typing import List
+from sqlalchemy.dialects.postgresql import insert
 
 class ActorService:
     def __init__(self, db_session):
@@ -36,10 +38,28 @@ class ActorService:
         # Devolver la representación en dict como hace get_actor_by_id
         return actor_obj
 
-    # def delete_actor(self, actor_id):
-    #     actor = self.get_actor_by_id(actor_id)
-    #     if actor:
-    #         self.db_session.delete(actor)
-    #         self.db_session.commit()
-    #         return True
-    #     return False
+    def get_actors_by_ids(self, actor_ids: List[int]) -> List[int]:
+        """Retorna los IDs de los actores que existen"""
+        return [
+            actor.id for actor in 
+            self.db_session.query(Actor.id)
+            .filter(Actor.id.in_(actor_ids))
+            .all()
+        ]
+
+    def create_actors_bulk(self, actors: List[dict]):
+        """
+        Crea múltiples actores en una sola transacción.
+        IMPORTANTE: Se asume que los actores en la lista ya fueron filtrados
+        y no existen en la base de datos.
+        """
+        if not actors:
+            return
+
+        # Usar INSERT ... ON CONFLICT DO NOTHING para ser robusto ante condiciones de carrera
+        # Construimos la sentencia con SQLAlchemy core y la ejecutamos en la sesión
+        stmt = insert(Actor).values(actors)
+        stmt = stmt.on_conflict_do_nothing(index_elements=['id'])
+
+        self.db_session.execute(stmt)
+        self.db_session.commit()
