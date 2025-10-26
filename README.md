@@ -28,7 +28,13 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-5. Execute app
+5. Levantar DB
+```bash
+docker compose up -d
+```
+Una vez levantado, si quiere ver la DB en la web, ir a http://localhost:8080
+
+6. Execute app
 ```bash
 py app.py
 ```

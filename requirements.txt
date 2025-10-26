@@ -5,3 +5,5 @@ requests
 matplotlib
 networkx
 httpx
+psycopg2-binary
+SQLAlchemy
