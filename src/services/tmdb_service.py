@@ -79,10 +79,10 @@ class TMDBService:
                     'title': movie.get('title'),
                     'poster_path': poster_path,
                     'release_date': movie.get('release_date'),
-                    'character': movie.get('character')
+                    'character': movie.get('character'),
+                    'all_cast_saved': False
                 })
 
-            print(len(movies))
             movies.sort(key=lambda x: x.get('release_date', ''), reverse=True)
             return movies
         except Exception as e:
@@ -103,7 +103,12 @@ class TMDBService:
                 data = response.json()
 
             cast = []
+            index = 0
+            max_cast = 90  # Limitar a los primeros 90 actores
             for person in data.get('cast', []):
+                index += 1
+                if index > max_cast:
+                    break
                 # if person
                 profile_path = person.get('profile_path')
                 if profile_path:
@@ -115,7 +120,64 @@ class TMDBService:
                     'character': person.get('character')
                 })
 
-            print(len(cast))
+            print( f"Cast N = {len(cast)}")
             return cast
+        except Exception as e:
+            return {'error': str(e)}, 500
+        
+    def get_actor_details(self, actor_id: int):
+        """
+        Obtiene los detalles de un actor dado su ID.
+        """
+
+        try:
+            with httpx.Client() as client:
+                response = client.get(
+                    f"{self.base_url}/person/{actor_id}",
+                    headers=self.headers
+                )
+                response.raise_for_status()
+                data = response.json()
+
+            profile_path = data.get('profile_path')
+            if profile_path:
+                profile_path = f"{self.url_images}{profile_path}"
+
+            actor_details = {
+                'id': data.get('id'),
+                'name': data.get('name'),
+                'profile_path': profile_path
+            }
+
+            return actor_details
+        except Exception as e:
+            return {'error': str(e)}, 500
+        
+    def get_movie_details(self, movie_id: int):
+        """
+        Obtiene los detalles de una película dada su ID.
+        """
+
+        try:
+            with httpx.Client() as client:
+                response = client.get(
+                    f"{self.base_url}/movie/{movie_id}",
+                    headers=self.headers
+                )
+                response.raise_for_status()
+                data = response.json()
+
+            poster_path = data.get('poster_path')
+            if poster_path:
+                poster_path = f"{self.url_images}{poster_path}"
+
+            movie_details = {
+                'id': data.get('id'),
+                'title': data.get('title'),
+                'poster_path': poster_path,
+                'release_date': data.get('release_date')
+            }
+
+            return movie_details
         except Exception as e:
             return {'error': str(e)}, 500

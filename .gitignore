@@ -17,3 +17,7 @@ __pycache__/
 .DS_Store
 
 .env
+
+# Archivos de base de datos
+postgres
+servers.json

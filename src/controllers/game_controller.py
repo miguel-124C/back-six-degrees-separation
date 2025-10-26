@@ -1,18 +1,18 @@
 from flask import Blueprint, request, jsonify
 from src.services.tmdb_service import TMDBService
+from src.services.game_sevice import GameService
 
 class GameController:
-    def __init__(self, tmdb_service: TMDBService):
-        self.tmdb_service = tmdb_service
+    def __init__(self, game_service: GameService):
+        self.game_service = game_service
         self.blueprint = Blueprint('game', __name__)
         self._register_routes()
 
     def _register_routes(self):
         """Registra todas las rutas del controlador"""
-        # self.blueprint.add_url_rule(
-        #     '/search/actors', 'search_actors', self.search_actors_controller, methods=['GET']
-        # )
-        pass
+        self.blueprint.add_url_rule(
+            '/verify/conection', 'verify_conection', self.verify_conection_actor, methods=['GET']
+        )
 
     def verify_conection_actor(self):
         """
@@ -23,11 +23,12 @@ class GameController:
 
         try:
             # 1. Obtener datos del servicio
-            # result = self.tmdb_service.search_actors(query)
+            self.game_service.saved_data_in_db(idActorA, idActorB)
 
+            print('verificacion')
             # 2. Determinar el tipo de respuesta basado en el Accept header
             # Para API: usar el view para formatear la respuesta JSON
             # return self.tmdb_view.format_actors_response(result)
-            pass
+            return jsonify({'message': 'Functionality not yet implemented'}), 200
         except Exception as e:
             return jsonify({'error': 'Internal Server Error', 'message': str(e)}), 500
