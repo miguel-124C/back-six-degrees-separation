@@ -2,10 +2,12 @@ from src.models.graphs import Graphs
 from src.services.actors_service import ActorService
 from src.services.movies_service import MovieService
 from src.services.actor_movie_service import ActorMovieService
-from src.services.actors_service import ActorService
 from src.services.tmdb_service import TMDBService
-from src.interfaces.models_interface import ActorInteface, MovieInterface
+from src.interfaces.models_interface import ActorInteface
 from typing import List
+import time
+import concurrent.futures
+from typing import Dict, Any
 
 class GameService:
     def __init__(
@@ -16,6 +18,12 @@ class GameService:
         self.movie_service = movie_service
         self.actor_movie_service = actor_movie_service
         self.tmdb_service = tmdb_service
+        # Tunable parameters to avoid overloading the TMDB API / reduce bursts
+        # You can lower max_workers and increase rate_limit_pause if you still hit limits.
+        self._max_workers = 6
+        self._chunk_size = 20
+        self._max_retries = 3
+        self._rate_limit_pause = 0.25  # seconds pause between chunks
 
     def saved_data_in_db(self, actor_id_a: int, actor_id_b: int) -> bool:
         """
@@ -32,12 +40,6 @@ class GameService:
         if not actorB['all_movies_saved']:
             self.__add_movies_and_cast__(actor_id_b)
             print('Add movies and cast B done')
-
-        # Lógica para verificar la conexión entre los actores
-        # (por ejemplo, buscando películas compartidas)
-        # shared_movies = set(movie.id for movie in actor_a.movies).intersection(
-        #     set(movie.id for movie in actor_b.movies)
-        # )
     
     def __add_actor_if_not_exists__(self, actor_id: int) -> ActorInteface:
         """
@@ -47,9 +49,12 @@ class GameService:
             actor = self.actor_service.get_actor_by_id(actor_id)
 
             if not actor:
-                actorTMDB = self.tmdb_service.get_actor_details(actor_id) # id, name, profile_path
-                self.actor_service.create_actor(id_person=actorTMDB['id'], name=actorTMDB['name'], profile_path=actorTMDB['profile_path'])
-                return { 'id': actorTMDB['id'], 'name': actorTMDB['name'], 'profile_path': actorTMDB['profile_path'], 'all_movies_saved': False }
+                actorTMDB = self.tmdb_service.get_actor_details(actor_id) # id, name, profile_path, popularity
+                self.actor_service.create_actor(
+                    id_person=actorTMDB['id'], name=actorTMDB['name'],
+                    profile_path=actorTMDB['profile_path'], popularity=actorTMDB['popularity']
+                )
+                return actorTMDB
             else:
                 return actor
         except Exception as e:
@@ -74,7 +79,9 @@ class GameService:
                 movies_to_create.append({
                     'id': movie['id'],
                     'title': movie['title'],
-                    'release_date': movie['release_date']
+                    'release_date': movie['release_date'],
+                    'poster_path': movie['poster_path'],
+                    'vote_average': movie['vote_average']
                 })
         
         # 4. Crear películas en lote
@@ -83,19 +90,45 @@ class GameService:
 
         # 5. Preparar todas las relaciones actor-película
         actor_movie_relations = [
-            {'id_actor': actor_id, 'id_movie': movie['id'], 'character': movie['character']}
+            {'id_actor': actor_id, 'id_movie': movie['id'], 'character': movie['character'], 'order': movie.get('order', 0)}
             for movie in movies
         ]
-        
-        # 6. Insertar relaciones en lote (ignorando duplicados)
-        self.actor_movie_service.add_actor_to_movies_bulk(actor_movie_relations)
+
+        # Evitar duplicados dentro del mismo lote (mismo actor en la misma película
+        # puede aparecer varias veces por datos repetidos)
+        deduped_relations = []
+        seen_pairs = set()
+        for r in actor_movie_relations:
+            pair = (r['id_actor'], r['id_movie'])
+            if pair in seen_pairs:
+                continue
+            seen_pairs.add(pair)
+            deduped_relations.append(r)
+
+        # Filtrar relaciones que ya existen en la BD para este actor (reduce trabajo
+        # en add_actor_to_movies_bulk y evita duplicados si la relación ya estaba)
+        try:
+            existing_movies_for_actor = set(m.id for m in self.actor_movie_service.get_all_movies_by_actor(actor_id))
+        except Exception as e:
+            print(f"Error comprobando películas existentes para actor {actor_id}: {e}")
+            existing_movies_for_actor = set()
+
+        relations_to_insert = [r for r in deduped_relations if r['id_movie'] not in existing_movies_for_actor]
+
+        # 6. Insertar relaciones en lote (el servicio a su vez filtra lo que ya está en BD)
+        if relations_to_insert:
+            try:
+                self.actor_movie_service.add_actor_to_movies_bulk(relations_to_insert)
+            except Exception as e:
+                print(f"Error adding actor-movie relations in bulk: {e}")
 
         # 7. Procesar el cast de películas nuevas en lote
         movies_needing_cast = [
-            m for m in movies 
-            if m['id'] not in existing_movie_ids and not m['all_cast_saved']
+            m for m in movies
+            if m['id'] not in existing_movie_ids
         ]
         
+        print(f"Movies needing cast: {len(movies_needing_cast)}")
         if movies_needing_cast:
             self.__add_cast_bulk__([m['id'] for m in movies_needing_cast])
             self.movie_service.check_cast_saved_bulk([m['id'] for m in movies_needing_cast], True)
@@ -107,34 +140,71 @@ class GameService:
         """
         Versión optimizada para agregar el cast de múltiples películas
         """
-        # 1. Obtener el cast de todas las películas (mapeado por movie_id)
-        all_casts_by_movie = {}
-        index = 0
-        for movie_id in movie_ids:
-            index += 1
-            print(index)
-            casts = self.tmdb_service.get_movie_credits(movie_id)
-            all_casts_by_movie[movie_id] = casts
+        # Strategy:
+        # - Fetch credits concurrently but bound concurrency with ThreadPoolExecutor
+        # - Process movie_ids in chunks to avoid bursting the API
+        # - Retry individual movie credit fetches with exponential backoff
+        # - Continue on failures (log and skip) so a single failure doesn't stop the whole batch
+
+        all_casts_by_movie: Dict[int, List[Dict[str, Any]]] = {}
+
+        def fetch_with_retries(mid: int):
+            attempt = 0
+            while attempt < self._max_retries:
+                try:
+                    # Call the TMDB service; let it raise on network errors so we can retry here
+                    casts = self.tmdb_service.get_movie_credits(mid)
+                    # Normalize None -> empty list
+                    if casts is None:
+                        casts = []
+                    return mid, casts
+                except Exception as e:
+                    attempt += 1
+                    backoff = 0.5 * (2 ** (attempt - 1))
+                    print(f"Error fetching credits for {mid} (attempt {attempt}/{self._max_retries}): {e}. Backing off {backoff}s")
+                    time.sleep(backoff)
+            # All retries failed
+            print(f"Failed to fetch credits for movie {mid} after {self._max_retries} attempts. Skipping.")
+            return mid, []
+
+        # Process in chunks to limit burst rate and optionally sleep between chunks
+        for i in range(0, len(movie_ids), self._chunk_size):
+            chunk = movie_ids[i:i + self._chunk_size]
+            with concurrent.futures.ThreadPoolExecutor(max_workers=self._max_workers) as executor:
+                future_to_mid = {executor.submit(fetch_with_retries, mid): mid for mid in chunk}
+                for fut in concurrent.futures.as_completed(future_to_mid):
+                    mid = future_to_mid[fut]
+                    try:
+                        movie_id, casts = fut.result()
+                        all_casts_by_movie[movie_id] = casts
+                    except Exception as e:
+                        # Shouldn't happen because fetch_with_retries catches, but just in case
+                        print(f"Unexpected error fetching {mid}: {e}")
+            # small pause between chunks to reduce burst risk
+            time.sleep(self._rate_limit_pause)
 
         # 2. Extraer IDs únicos de actores
         unique_actor_ids = {cast['id'] for casts in all_casts_by_movie.values() for cast in casts}
 
         # 3. Obtener actores existentes en un solo query
-        existing_actor_ids = set(self.actor_service.get_actors_by_ids(list(unique_actor_ids)))
+        if unique_actor_ids:
+            existing_actor_ids = set(self.actor_service.get_actors_by_ids(list(unique_actor_ids)))
+        else:
+            existing_actor_ids = set()
 
         # 4. Preparar actores nuevos para inserción en lote (una sola entrada por actor)
-        actors_map = {}
+        actors_map: Dict[int, Dict[str, Any]] = {}
         for casts in all_casts_by_movie.values():
             for cast in casts:
-                # guardar la primera aparición del actor
-                if cast['id'] not in actors_map:
+                if cast and 'id' in cast and cast['id'] not in actors_map:
                     actors_map[cast['id']] = cast
 
         actors_to_create = [
             {
                 'id': aid,
-                'name': actors_map[aid]['name'],
-                'profile_path': actors_map[aid].get('profile_path')
+                'name': actors_map[aid].get('name'),
+                'profile_path': actors_map[aid].get('profile_path'),
+                'popularity': actors_map[aid].get('popularity', 0.0)
             }
             for aid in actors_map.keys()
             if aid not in existing_actor_ids
@@ -143,30 +213,40 @@ class GameService:
 
         # 5. Crear actores en lote (lista ya deduplicada por id)
         if actors_to_create:
-            self.actor_service.create_actors_bulk(actors_to_create)
+            try:
+                self.actor_service.create_actors_bulk(actors_to_create)
+            except Exception as e:
+                print(f"Error creating actors bulk: {e}")
 
         # 6. Preparar todas las relaciones actor-película (solo las reales por película)
         relations = []
         for movie_id, casts in all_casts_by_movie.items():
             for cast in casts:
+                if not cast or 'id' not in cast:
+                    continue
                 relations.append({
                     'id_actor': cast['id'],
                     'id_movie': movie_id,
-                    'character': cast.get('character')
+                    'character': cast.get('character'),
+                    'order': cast.get('order', 0)
                 })
 
-        # 7. Insertar relaciones en lote
-        if relations:
-            self.actor_movie_service.add_actor_to_movies_bulk(relations)
+        # Evitar duplicados dentro del mismo lote (mismo actor en la misma película
+        # puede aparecer varias veces en distintos casts o por datos repetidos)
+        deduped_relations = []
+        seen_pairs = set()
+        for r in relations:
+            pair = (r['id_actor'], r['id_movie'])
+            if pair in seen_pairs:
+                # saltar duplicados internos
+                continue
+            seen_pairs.add(pair)
+            deduped_relations.append(r)
 
-    def __add_movie_if_not_exists__(self, movie_id: int, title: str, release_date: str) -> bool:
-        """
-        Verifica si una peli existe en la base de datos.
-        """
-        movie = self.movie_service.get_movie_by_id(movie_id)
-
-        if not movie:
-            self.movie_service.create_movie(id=movie_id, title=title, release_date=release_date)
-            return False
-        return True
-        
+        # 7. Insertar relaciones en lote (el servicio ya filtra las que están en la BD,
+        # aquí prevenimos inserciones múltiples dentro del mismo batch)
+        if deduped_relations:
+            try:
+                self.actor_movie_service.add_actor_to_movies_bulk(deduped_relations)
+            except Exception as e:
+                print(f"Error adding actor-movie relations in bulk: {e}")

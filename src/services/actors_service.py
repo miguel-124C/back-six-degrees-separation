@@ -16,11 +16,12 @@ class ActorService:
             'id': actor.id,
             'name': actor.name,
             'profile_path': actor.profile_path,
-            'all_movies_saved': actor.all_movies_saved
+            'all_movies_saved': actor.all_movies_saved,
+            'popularity': actor.popularity
         }
 
-    def create_actor(self, name, id_person, profile_path):
-        new_actor = Actor(name=name, id=id_person, profile_path=profile_path)
+    def create_actor(self, id_person, name, profile_path, popularity):
+        new_actor = Actor(name=name, id=id_person, profile_path=profile_path, popularity=popularity)
         self.db_session.add(new_actor)
         self.db_session.commit()
         return new_actor

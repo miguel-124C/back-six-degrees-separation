@@ -40,13 +40,10 @@ class TMDBService:
             actors = []
             for person in data.get('results', []):
                 if person.get('known_for_department') == "Acting":
-                    profile_path = person.get('profile_path')
-                    if profile_path:
-                        profile_path = f"{self.url_images}{profile_path}"
                     actors.append({
                         'id': person.get('id'),
                         'name': person.get('name'),
-                        'profile_path': profile_path,
+                        'profile_path': person.get('profile_path'),
                         'popularity': person.get('popularity')
                     })
 
@@ -71,20 +68,17 @@ class TMDBService:
 
             movies = []
             for movie in data.get('cast', []):
-                poster_path = movie.get('poster_path')
-                if poster_path:
-                    poster_path = f"{self.url_images}{poster_path}"
                 movies.append({
                     'id': movie.get('id'),
                     'title': movie.get('title'),
-                    'poster_path': poster_path,
+                    'poster_path': movie.get('poster_path'),
                     'release_date': movie.get('release_date'),
+                    'vote_average': movie.get('vote_average'),
                     'character': movie.get('character'),
-                    'all_cast_saved': False
+                    'order': movie.get('order')
                 })
 
             movies = sorted(movies, key=lambda x: x.get('release_date', ''), reverse=True)[:150]
-            print('MOVIES TMDB:', len(movies))
             return movies
         except Exception as e:
             return {'error': str(e)}, 500
@@ -105,14 +99,11 @@ class TMDBService:
 
             cast = []
             for person in data.get('cast', []):
-                # if person
-                profile_path = person.get('profile_path')
-                if profile_path:
-                    profile_path = f"{self.url_images}{profile_path}"
                 cast.append({
                     'id': person.get('id'),
                     'name': person.get('name'),
-                    'profile_path': profile_path,
+                    'profile_path': person.get('profile_path'),
+                    'popularity': person.get('popularity'),
                     'character': person.get('character'),
                     'order': person.get('order')
                 })
@@ -137,17 +128,18 @@ class TMDBService:
                 response.raise_for_status()
                 data = response.json()
 
-            profile_path = data.get('profile_path')
-            if profile_path:
-                profile_path = f"{self.url_images}{profile_path}"
-
             actor_details = {
                 'id': data.get('id'),
                 'name': data.get('name'),
-                'profile_path': profile_path
+                'profile_path': data.get('profile_path'),
+                'popularity': data.get('popularity')
             }
 
-            return actor_details
+            return {
+                'id': actor_details['id'], 'name': actor_details['name'],
+                'profile_path': actor_details['profile_path'], 'popularity': actor_details['popularity'],
+                'all_movies_saved': False
+            }
         except Exception as e:
             return {'error': str(e)}, 500
         
@@ -165,14 +157,10 @@ class TMDBService:
                 response.raise_for_status()
                 data = response.json()
 
-            poster_path = data.get('poster_path')
-            if poster_path:
-                poster_path = f"{self.url_images}{poster_path}"
-
             movie_details = {
                 'id': data.get('id'),
                 'title': data.get('title'),
-                'poster_path': poster_path,
+                'poster_path': data.get('poster_path'),
                 'release_date': data.get('release_date')
             }
 
