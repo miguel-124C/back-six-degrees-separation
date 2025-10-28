@@ -263,7 +263,7 @@ class GameService:
         # graphs = Graphs(self.actor_movie_service)
 
         # BSF unidireccional
-        # is_find = self.graphs.bfs(actor_a_id, actor_b_id)
+        # ruta = self.graphs.bfs(actor_a_id, actor_b_id)
         ruta = self.graphs.bfs_bidireccional(actor_a_id, actor_b_id)
         if not ruta:
             return None
