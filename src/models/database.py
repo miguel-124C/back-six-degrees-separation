@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, BigInteger, String, ForeignKey, DateTime, Boolean, func, UniqueConstraint, Float
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import relationship
+from sqlalchemy import Index
 
 Base = declarative_base()
 
@@ -14,8 +14,12 @@ class Actor(Base):
     last_updated = Column(DateTime, nullable=False, server_default=func.current_timestamp())
     all_movies_saved = Column(Boolean, nullable=False, server_default='0')
 
-    # Relación con movies a través de actors_movies
-    movies = relationship('Movie', secondary='actors_movies', back_populates='actors')
+    __table_args__ = (
+        # Índices para consultas frecuentes
+        Index('idx_actors_name', 'name'),  # Para búsquedas por nombre
+        Index('idx_actors_popularity', 'popularity'),  # Para ordenar por popularidad
+        Index('idx_actors_all_movies', 'all_movies_saved'),  # Para filtrar por estado
+    )
 
 class Movie(Base):
     __tablename__ = 'movies'
@@ -27,15 +31,20 @@ class Movie(Base):
     vote_average = Column(Float(), server_default='0.0')
     all_cast_saved = Column(Boolean, nullable=False, server_default='0')
 
-    # Relación con actors a través de actors_movies
-    actors = relationship('Actor', secondary='actors_movies', back_populates='movies')
+    __table_args__ = (
+        # Índices para consultas frecuentes
+        Index('idx_movies_release_date', 'release_date'),
+        Index('idx_movies_vote_avg', 'vote_average'),
+        Index('idx_movies_title', 'title'),  # Para búsquedas por título
+        Index('idx_movies_all_cast', 'all_cast_saved'),  # Para filtrar por estado
+    )
 
 class ActorMovie(Base):
     __tablename__ = 'actors_movies'
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
-    id_actor = Column(BigInteger, ForeignKey('actors.id'), nullable=False)
-    id_movie = Column(BigInteger, ForeignKey('movies.id'), nullable=False)
+    id_actor = Column(BigInteger, ForeignKey('actors.id'), nullable=False, index=True)
+    id_movie = Column(BigInteger, ForeignKey('movies.id'), nullable=False, index=True)
     character = Column(String(500), nullable=False, server_default='None')
     order = Column(Integer, server_default='0')
 
@@ -43,4 +52,8 @@ class ActorMovie(Base):
     # pair cannot be inserted twice.
     __table_args__ = (
         UniqueConstraint('id_actor', 'id_movie', name='uix_actor_movie'),
+        # Índices adicionales para optimizar consultas
+        Index('idx_actor_movie_actor', 'id_actor'),
+        Index('idx_actor_movie_movie', 'id_movie'),
+        Index('idx_actor_movie_order', 'id_movie', 'order'),  # Útil para ordenar el reparto
     )

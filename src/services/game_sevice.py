@@ -24,20 +24,21 @@ class GameService:
         self._chunk_size = 20
         self._max_retries = 3
         self._rate_limit_pause = 0.25  # seconds pause between chunks
+        self.graphs = Graphs(self.actor_movie_service)
 
     def saved_data_in_db(self, actor_id_a: int, actor_id_b: int) -> bool:
         """
         Guarda en la base de datos la información necesaria para verificar la conexión entre dos actores.
         """
         actorA = self.__add_actor_if_not_exists__(actor_id_a)
-        print('Add actor A done')
-        if not actorA['all_movies_saved']:
+        if actorA and not actorA['all_movies_saved']:
+            print('Add actor A done')
             self.__add_movies_and_cast__(actor_id_a)
             print('Add movies and cast A done')
 
         actorB = self.__add_actor_if_not_exists__(actor_id_b)
-        print('Add actor B done')
-        if not actorB['all_movies_saved']:
+        if actorB and not actorB['all_movies_saved']:
+            print('Add actor B done')
             self.__add_movies_and_cast__(actor_id_b)
             print('Add movies and cast B done')
     
@@ -50,6 +51,8 @@ class GameService:
 
             if not actor:
                 actorTMDB = self.tmdb_service.get_actor_details(actor_id) # id, name, profile_path, popularity
+                if not actorTMDB:
+                    return None
                 self.actor_service.create_actor(
                     id_person=actorTMDB['id'], name=actorTMDB['name'],
                     profile_path=actorTMDB['profile_path'], popularity=actorTMDB['popularity']
@@ -250,3 +253,55 @@ class GameService:
                 self.actor_movie_service.add_actor_to_movies_bulk(deduped_relations)
             except Exception as e:
                 print(f"Error adding actor-movie relations in bulk: {e}")
+
+    def search_connection(self, actor_a_id: int, actor_b_id: int):
+        """
+        Se busca todos los actores asociados a uno
+        Luego se agrega esos al grafo para luego buscar mediandte el algoritmo BFS
+        """
+        # Antes se tenia asi, se creaba cada vez el objeto, hacia lento las operaciones, ya que no se persistian los nodos y aristas
+        # graphs = Graphs(self.actor_movie_service)
+
+        # BSF unidireccional
+        # is_find = self.graphs.bfs(actor_a_id, actor_b_id)
+        ruta = self.graphs.bfs_bidireccional(actor_a_id, actor_b_id)
+        if not ruta:
+            return None
+        
+        ruta_con_actores: List = []
+        for r in ruta:
+            actor1 = self.actor_service.get_actor_by_id(r[0])
+            actor2 = self.actor_service.get_actor_by_id(r[2])
+            ruta_con_actores.append({
+                'actual': actor1,
+                'movie': r[1],
+                'destino': actor2
+            })
+        return ruta_con_actores
+
+    def actors_shared_movies(self, actora_id: int, actorb_id):
+        actorA = self.__add_actor_if_not_exists__(actora_id)
+        if actorA and not actorA['all_movies_saved']:
+            print('Add actor A done')
+            self.__add_movies_and_cast__(actora_id)
+            print('Add movies and cast A done')
+
+        actorB = self.__add_actor_if_not_exists__(actorb_id)
+        if actorB and not actorB['all_movies_saved']:
+            print('Add actor B done')
+            self.__add_movies_and_cast__(actorb_id)
+            print('Add movies and cast B done')
+        movies_shared = self.actor_movie_service.shared_movies(actora_id, actorb_id)
+
+        if not movies_shared:
+            return None
+        
+        first_movie = movies_shared[0]
+        movie_shared_populate = {
+            'id': first_movie.id,
+            'title': first_movie.title,
+            'release_date': first_movie.release_date,
+            'vote_average': first_movie.vote_average,
+            'poster_path': first_movie.poster_path
+        }
+        return movie_shared_populate

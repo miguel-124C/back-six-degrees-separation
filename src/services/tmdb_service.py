@@ -11,7 +11,6 @@ class TMDBService:
             "accept": "application/json",
             "Authorization": f"Bearer {self.api_key}"
         }
-        self.url_images = "https://image.tmdb.org/t/p/original"
 
     def search_actors(self, query: str):
         """
@@ -67,7 +66,12 @@ class TMDBService:
                 data = response.json()
 
             movies = []
+            ORDER_THRESHOLD = 50
             for movie in data.get('cast', []):
+                movie_order = movie.get('order')
+                # ✨ FILTRO CLAVE: Ignorar roles con orden alto (cameos/extras)
+                if movie_order is not None and movie_order > ORDER_THRESHOLD:
+                    continue # Salta este crédito y no lo agrega a la lista
                 movies.append({
                     'id': movie.get('id'),
                     'title': movie.get('title'),
@@ -98,7 +102,12 @@ class TMDBService:
                 data = response.json()
 
             cast = []
+            ORDER_THRESHOLD = 50
             for person in data.get('cast', []):
+                movie_order = person.get('order')
+                # FILTRO CLAVE: Ignorar roles con orden alto (cameos/extras)
+                if movie_order is not None and movie_order > ORDER_THRESHOLD:
+                    continue # Salta esta persona y no lo agrega a la lista
                 cast.append({
                     'id': person.get('id'),
                     'name': person.get('name'),
@@ -132,8 +141,12 @@ class TMDBService:
                 'id': data.get('id'),
                 'name': data.get('name'),
                 'profile_path': data.get('profile_path'),
-                'popularity': data.get('popularity')
+                'popularity': data.get('popularity'),
+                'known_for_department': data.get('known_for_department')
             }
+
+            if actor_details['known_for_department'] != "Acting":
+                return None
 
             return {
                 'id': actor_details['id'], 'name': actor_details['name'],
