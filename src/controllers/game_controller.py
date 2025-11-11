@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify
 from src.services.tmdb_service import TMDBService
 from src.services.game_sevice import GameService
+from typing import List
 
 class GameController:
     def __init__(self, game_service: GameService):
@@ -21,18 +22,21 @@ class GameController:
         """
         Controller para ver si hay conexión entre 2 actores.
         """
+        idActor0 = int(request.args.get('idActor0', 0))
         idActorA = int(request.args.get('idActorA', 0))
         idActorB = int(request.args.get('idActorB', 0))
 
         try:
             # 1. Obtener datos del servicio
+            self.game_service.saved_data_in_db(idActor0, idActorA)
+            ruta = self.game_service.search_connection(idActor0, idActorA)
             self.game_service.saved_data_in_db(idActorA, idActorB)
-            ruta = self.game_service.search_connection(idActorA, idActorB)
+            ruta2 = self.game_service.search_connection(idActorA, idActorB)
 
-            if not ruta:
-                return jsonify({'connection': False, 'ruta': None}), 200
+            if not ruta and not ruta2:
+                return jsonify({'connection': False, 'ruta': None, 'ruta2': None}), 200
             else:
-                return jsonify({'connection': True, 'ruta': ruta}), 200
+                return jsonify({'connection': True, 'ruta': ruta, 'ruta2': ruta2}), 200
         except Exception as e:
             return jsonify({'error': 'Internal Server Error', 'message': str(e)}), 500
         
