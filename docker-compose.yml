@@ -4,7 +4,7 @@ services:
     container_name: backend_postgres
     restart: always
     ports:
-      - "5435:5432"
+      - "${DB_PORT}:5432"
     environment:
       POSTGRES_USER: ${DB_USER_NAME}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
