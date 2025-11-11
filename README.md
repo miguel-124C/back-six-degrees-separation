@@ -42,3 +42,6 @@ py app.py
 ## Notas
 Se requiere tener: Docker, Node v22, Python 3
 Tambien tener un token de TMDB para hacer las busquedas
+
+## Video Demostrativo
+[Video](https://youtu.be/ZmjoaaNWn6Y)
