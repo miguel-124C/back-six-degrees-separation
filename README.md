@@ -38,3 +38,7 @@ Una vez levantado, si quiere ver la DB en la web, ir a http://localhost:8080
 ```bash
 py app.py
 ```
+
+## Notas
+Se requiere tener: Docker, Node v22, Python 3
+Tambien tener un token de TMDB para hacer las busquedas
